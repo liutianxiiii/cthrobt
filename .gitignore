@@ -1,0 +1,13 @@
+# Runtime logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db

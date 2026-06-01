@@ -15,6 +15,7 @@ import sys
 import struct
 import time
 import json
+import random
 import socket
 import logging
 import argparse
@@ -299,6 +300,72 @@ class GamepadController:
             if prev_any:
                 self.log.info("[INPUT] (released)")
 
+    # ── Mock mode ─────────────────────────────────────────────────────────
+
+    def _mock_state(self, rng: random.Random) -> dict:
+        """Generate a single random gamepad state."""
+        all_btns = list(self.btn_names.values())
+        all_axes = list(self.axis_names.values())
+        buttons  = {n: False for n in all_btns}
+        axes     = {n: 0.0   for n in all_axes}
+        hat      = [0, 0]
+
+        if rng.random() > 0.25:  # 75% non-idle
+            for name in rng.sample(all_btns, rng.randint(0, min(3, len(all_btns)))):
+                buttons[name] = True
+            for name in rng.sample(all_axes, rng.randint(0, min(2, len(all_axes)))):
+                v = round(rng.uniform(-1.0, 1.0), 4)
+                axes[name] = 0.0 if abs(v) < self.deadzone else v
+            if rng.random() < 0.2:
+                hat = rng.choice([[1, 0], [-1, 0], [0, 1], [0, -1]])
+
+        return {"buttons": buttons, "axes": axes, "hat": hat}
+
+    def run_mock(self, count: int, interval: float, log_path: str) -> str:
+        """Send random gamepad packets without a real controller.
+
+        Returns the path of the written JSONL log file.
+        """
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        rng = random.Random()
+
+        self.log.info("=" * 48)
+        self.log.info("  Mock Mode — Random Gamepad Packets")
+        self.log.info("=" * 48)
+        self.log.info(f"Target  : {self.host}:{self.port}")
+        self.log.info(f"Packets : {count}  Interval: {interval}s")
+        self.log.info(f"Log     : {log_path}")
+
+        while not self.connect():
+            self.log.info(f"Retry in {self.reconnect_delay:.0f}s …  (Ctrl+C to quit)")
+            time.sleep(self.reconnect_delay)
+
+        sent_entries: list = []
+        try:
+            for seq in range(1, count + 1):
+                state = self._mock_state(rng)
+                ts    = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                self._log_state(state)
+                if not self.send(state):
+                    self.log.warning(f"[seq {seq}] Send failed — reconnecting …")
+                    time.sleep(self.reconnect_delay)
+                    while not self.connect():
+                        time.sleep(self.reconnect_delay)
+                    self.send(state)
+                sent_entries.append({"seq": seq, "time": ts, **state})
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            self.log.info("Interrupted.")
+        finally:
+            self.disconnect()
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            for e in sent_entries:
+                f.write(json.dumps(e, separators=(",", ":")) + "\n")
+
+        self.log.info(f"Sent {len(sent_entries)} packets → {log_path}")
+        return log_path
+
     # ── Main loop ─────────────────────────────────────────────────────────
 
     def run(self):
@@ -378,10 +445,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Nintendo Gamepad → STM32 Socket Controller"
     )
-    parser.add_argument(
-        "--config", default="config.ini",
-        help="Path to config file (default: config.ini)"
-    )
+    parser.add_argument("--config", default="config.ini",
+                        help="Path to config file (default: config.ini)")
+    parser.add_argument("--mock", action="store_true",
+                        help="Mock mode: send random packets without a real gamepad")
+    parser.add_argument("--mock-count", type=int, default=20, metavar="N",
+                        help="Number of mock packets to send (default: 20)")
+    parser.add_argument("--mock-interval", type=float, default=0.5, metavar="SEC",
+                        help="Interval between packets in seconds (default: 0.5)")
+    parser.add_argument("--mock-log", default=None, metavar="FILE",
+                        help="Output JSONL file for sent packets (default: logs/mock_sent_<ts>.jsonl)")
     args = parser.parse_args()
 
     cfg_path = args.config
@@ -402,7 +475,18 @@ def main():
     else:
         logger.info(f"Config : {cfg_path}")
 
-    GamepadController(cfg, logger).run()
+    ctrl = GamepadController(cfg, logger)
+
+    if args.mock:
+        if args.mock_log:
+            mock_log = args.mock_log
+        else:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            mock_log = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "logs", f"mock_sent_{ts}.jsonl")
+        ctrl.run_mock(args.mock_count, args.mock_interval, mock_log)
+    else:
+        ctrl.run()
 
 
 if __name__ == "__main__":
