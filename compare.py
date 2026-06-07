@@ -78,12 +78,12 @@ _GAMEPAD_LINE = re.compile(
 )
 
 def load_received(path: str) -> list[str]:
-    """Extract gamepad-state [CTRL] lines from Renode log, skipping startup messages."""
+    """Extract gamepad-state lines from Renode log ([CTRL]) or simulator log ([RX-JSON]/[RX-BIN])."""
     ctrl_lines: list[str] = []
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                m = re.search(r'\[CTRL\]\s+(.*)', line)
+                m = re.search(r'\[CTRL\]\s+(.*)', line) or re.search(r'\[RX-(?:JSON|BIN)\]\s+(.*)', line)
                 if not m:
                     continue
                 content = m.group(1).strip()
