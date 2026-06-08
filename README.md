@@ -1,5 +1,7 @@
 # cthrobt — Nintendo Gamepad Controller (PC side)
 
+> [中文说明](README.zh-CN.md)
+
 PC-side Python suite that reads a Nintendo Switch Pro Controller and streams gamepad state to an STM32 board (real hardware or Renode simulation) over TCP.
 
 ## Architecture
